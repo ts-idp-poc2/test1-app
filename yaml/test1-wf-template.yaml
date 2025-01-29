@@ -1,0 +1,111 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: test1-wf-template
+  namespace: test1
+spec:
+  volumes:
+  - name: sshdir
+    emptyDir: {}
+  - name: workdir
+    persistentVolumeClaim:
+      claimName: source-pvc
+  - name: cacert
+    configMap:
+      name: enterprise-ca
+  - name: github-app-key
+    secret:
+      secretName: app-key
+  - name: github-infra-key
+    secret:
+      secretName: cicd-key
+  - name: harbor-secret
+    secret:
+      secretName: cicd-secret
+  templates:
+    - name: step-template
+      steps:
+        - - name: pull-source
+            template: pull-source
+        - - name: build-container
+            template: build-container
+        - - name: patch-infra
+            template: patch-infra
+
+    - name: pull-source
+      container:
+        image: alpine/git
+        command: ['sh','-c']
+        args: 
+        - |
+            mkdir -p ~/.ssh
+            cp /mnt/github-app/id_rsa ~/.ssh/id_rsa
+            echo "StrictHostKeyChecking no" >> ~/.ssh/config
+            chmod -R 600 ~/.ssh
+            cd /workdir
+            rm -rf *
+            git clone git@github.com:ts-idp-poc/test1-app.git
+            cd /workdir/test1-app
+            LATEST_COMMIT=$(git rev-parse --short HEAD)
+            echo -n $LATEST_COMMIT > /workdir/tag.txt
+            cat /workdir/tag.txt
+        volumeMounts:
+        - name: workdir
+          mountPath: /workdir
+        - name: github-app-key
+          mountPath: /mnt/github-app
+
+    - name: build-container
+      container:
+        image: gcr.io/kaniko-project/executor:v1.14.0-debug
+        command: ['sh','-c']
+        args:
+        - |
+            mkdir -p /kaniko/.docker
+            cp /mnt/harbor/.dockerconfigjson /kaniko/.docker/config.json
+            cd /workdir/test1-app
+            /kaniko/executor \
+              --dockerfile source/Dockerfile \
+              --context source \
+              --destination harbor.idp-poc.tremolo.dev/test1/mypython:$(cat /workdir/tag.txt) \
+              --registry-certificate harbor.idp-poc.tremolo.dev=/cacert/ca.crt
+        volumeMounts:
+        - name: workdir
+          mountPath: /workdir
+        - name: harbor-secret
+          mountPath: /mnt/harbor
+        - name: cacert
+          mountPath: /cacert
+
+    - name: patch-infra
+      container:
+        image: ghcr.io/tremolosecurity/vcluster-onboard:1.0.0
+        command: ['sh','-c']
+        args: 
+        - |
+            mkdir -p ~/.ssh
+            cp /mnt/github-infra/id_rsa ~/.ssh/id_rsa
+            echo "StrictHostKeyChecking no" >> ~/.ssh/config
+            chmod -R 600 ~/.ssh
+            cd /workdir
+            git clone git@github.com:ts-idp-poc/test1-infra.git
+            cd test1-infra
+            git config user.name argoworkflow-cicd
+            git config user.email argoworkflow-cicd@nohost.domain.com
+            kubectl patch --local -f yaml/test1/deployments/test1.yaml -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"test1\",\"image\":\"harbor.idp-poc.tremolo.dev/test1/mypython:$(cat /workdir/tag.txt)\"}]}}}}" -o yaml > /tmp/test1.yaml
+            cp /tmp/test1.yaml yaml/test1/deployments/test1.yaml
+            git add yaml/test1/deployments/test1.yaml
+            git commit -m "commit automated build from commit $(cat /workdir/tag.txt)"
+            git push
+        volumeMounts:
+        - name: workdir
+          mountPath: /workdir
+        - name: github-infra-key
+          mountPath: /mnt/github-infra
+        - name: sshdir
+          mountPath: /usr/local/openunison/.ssh
+
+
+
+
+    
