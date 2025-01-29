@@ -73,8 +73,8 @@ spec:
             echo 'docker file'
             cat source/Dockerfile
             /kaniko/executor \
-              --dockerfile source/Dockerfile \
-              --context source \
+              --dockerfile code/Dockerfile \
+              --context code \
               --destination harbor.idp-poc.tremolo.dev/test1/mypython:$(cat /workdir/tag.txt) \
               --registry-certificate harbor.idp-poc.tremolo.dev=/cacert/ca.crt
         volumeMounts:
