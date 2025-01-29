@@ -49,6 +49,7 @@ spec:
             LATEST_COMMIT=$(git rev-parse --short HEAD)
             echo -n $LATEST_COMMIT > /workdir/tag.txt
             cat /workdir/tag.txt
+            chmod -R ugo+rw /workdir
         volumeMounts:
         - name: workdir
           mountPath: /workdir
@@ -61,9 +62,15 @@ spec:
         command: ['sh','-c']
         args:
         - |
+            echo 'checking work dir'
+            ls -lh /workdir/test1-app
+            
             mkdir -p /kaniko/.docker
             cp /mnt/harbor/.dockerconfigjson /kaniko/.docker/config.json
+            
             cd /workdir/test1-app
+            echo 'docker file'
+            cat source/Dockerfile
             /kaniko/executor \
               --dockerfile source/Dockerfile \
               --context source \
